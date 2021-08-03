@@ -27,3 +27,10 @@ class Obj(object):
                             self.faces.append(
                                 [list(map(int, face.split("//"))) for face in value.split(" ")]
                             )
+
+
+import gl as gl
+render = gl.Renderer(800, 600)
+render.load('./models/car.obj', [4,3], [100, 100])
+render.glFinish()
+

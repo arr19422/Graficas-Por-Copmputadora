@@ -1,6 +1,5 @@
 import struct
 import numpy as np
-from obj import Obj
 
 
 def char(c):
@@ -27,11 +26,10 @@ class Renderer(object):
     def __init__(self, width, height):
         self.glInit()
         self.glCreateWindow(width, height)
-        self.glViewPort(50, 50)
+        self.glViewPort(800, 600)
         self.glClear()
         self.glClearColor(0, 0, 0)
-        self.glColor(0.2, 0.8, 0.65)
-        # self.line(0.2, 0.2, 0.6, 0.7)
+        self.glColor(1, 1, 1)
 
     def glInit(self):
         self.curret_color = WHITE
@@ -88,9 +86,9 @@ class Renderer(object):
     def glFinish(self):
         self.write("x.bmp")
 
-    def point(self, x, y):
+    def point(self, x, y, color):
         try:
-            self.framebuffer[int(y)][int(x)] = WHITE
+            self.framebuffer[int(y)][int(x)] = color
         except:
             pass
 
@@ -125,10 +123,10 @@ class Renderer(object):
 
             offset += (dy / dx) * 2 * dx
             if offset >= threshold:
-                y += 0.1 if y0 < y1 else -1
+                y += 0.1 if y0 < y1 else -0.1
                 threshold += 0.1 * 2 * dx
 
-    def line2(self, x0, y0, x1, y1):
+    def line2(self, x0, y0, x1, y1, color):
         dy = abs(y1 - y0)
         dx = abs(x1 - x0)
 
@@ -151,10 +149,9 @@ class Renderer(object):
 
         for x in range(x0, x1 + 1):
             if steep:
-                self.point(y, x)
+                self.point(y, x, color)
             else:
-
-                self.point(x, y)
+                self.point(x, y, color)
 
             offset += dy * 2
             if offset >= threshold:
@@ -162,6 +159,7 @@ class Renderer(object):
                 threshold += dx * 2
 
     def load(self, filename, translate, scale):
+        from obj import Obj
         model = Obj(filename)
 
         for face in model.faces:
@@ -179,9 +177,40 @@ class Renderer(object):
                 x2 = round((v2[0] + translate[0]) * scale[0])
                 y2 = round((v2[1] + translate[1]) * scale[1])
 
-                self.line2(x1, y1, x2, y2)
+                self.line2(x1, y1, x2, y2, self.curret_color)
+
+    def fill(self, polygon, color):
+        polygon = [list(pol) for pol in polygon]
+        xmax = max(map(lambda x: x[0], polygon))
+        xmin = min(map(lambda x: x[0], polygon))
+        ymax = max(map(lambda x: x[1], polygon))
+        ymin = min(map(lambda x: x[1], polygon))
+        dy = round((ymax + ymin) / 2)
+        dx = round((xmax + xmin) / 2)
+        countx = xmax
+        county = ymax
+        while dx < countx and dy < county:
+            for i in range(0, len(polygon)):
+                if i == (len(polygon)-1):
+                    self.line2(polygon[i][0], polygon[i][1], polygon[0][0], polygon[0][1], color)
+
+                else:
+                    self.line2(polygon[i][0], polygon[i][1], polygon[i+1][0], polygon[i+1][1], color)
+
+                if polygon[i][0] > dx:
+                    polygon[i][0] -= 1
+                elif polygon[i][0] < dx:
+                    polygon[i][0] += 1
 
 
-r = Renderer(800, 600)
-r.load("./models/car.obj", (4, 3.5), (100, 100))
-r.glFinish()
+                if polygon[i][1] > dy:
+                    polygon[i][1] -= 1
+                elif polygon[i][1] < dy:
+                    polygon[i][1] += 1
+
+
+            if countx > dx:
+                countx -= 1
+            if county > dy:
+                county -= 1
+        pass
