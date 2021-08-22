@@ -1,5 +1,10 @@
 import struct
+import random
+from collections import namedtuple
 import numpy as np
+
+V2 = namedtuple('Point2', ['x', 'y'])
+V3 = namedtuple('Point3', ['x', 'y', 'z'])
 
 
 def char(c):
@@ -18,6 +23,51 @@ def color(r, g, b):
     return bytes([r, g, b])
 
 
+def bbox(A, B, C):
+    xs = [A.x, B.x, C.x]
+    xs.sort()
+    ys = [A.y, B.y, C.y]
+    ys.sort()
+    return xs[0], xs[-1], ys[0], ys[-1]
+
+
+def cross(v0, v1):
+    cx = v0.y * v1.z - v0.z * v1.y
+    cy = v0.z * v1.x - v0.x * v1.z
+    cz = v0.x * v1.y - v0.y * v1.x
+
+    return V3(cx, cy, cz)
+
+
+def barycentric(A, B, C, P):
+    cx, cy, cz = cross(
+        V3(B.x - A.x, C.x - A.x, A.x - P.x), 
+        V3(B.y - A.y, C.y - A.y, A.y - P.y)
+    )
+
+    if cz == 0:
+        return -1, -1, -1
+
+    v = cy / cz
+    u = cx / cz
+    w = 1 - (cx + cy)/cz
+    return w, v, u
+
+def sub(v0,v1):
+    return V3(v0.x - v1.x, v0.y - v1.y, v0.z - v1.z)
+
+def length(v0):
+    return (v0.x ** 2 + v0.y ** 2 + v0.z ** 2) ** 0.5
+
+def norm(v0):
+    l = length(v0)
+    if l == 0:
+        return V3(0,0,0)
+    return V3(v0.x/l, v0.y/l, v0.z/l)
+
+def dot(v0,v1):
+    return(v0.x*v1.x + v0.y*v1.y + v0.z*v1.z)
+
 WHITE = color(255, 255, 255)
 BLACK = color(0, 0, 0)
 
@@ -26,13 +76,12 @@ class Renderer(object):
     def __init__(self, width, height):
         self.glInit()
         self.glCreateWindow(width, height)
-        self.glViewPort(800, 600)
         self.glClear()
-        self.glClearColor(0, 0, 0)
-        self.glColor(1, 1, 1)
+        self.glClearColor(0.219,0,0)
+        self.glColor(0.95,0.12,0.135)
 
     def glInit(self):
-        self.curret_color = WHITE
+        self.curret_color = color(0, 0, 139)
 
     def glCreateWindow(self, width, height):
         self.width = width
@@ -42,9 +91,16 @@ class Renderer(object):
         self.framebuffer = [
             [self.curret_color for x in range(self.width)] for y in range(self.height)
         ]
+        self.zbuffer = [
+            [-float('inf') for x in range(self.width)] for y in range(self.height)
+        ]
 
     def glClearColor(self, r, g, b):
-        self.curret_color = color(int(r * 255), int(g * 255), int(b * 255))
+        if(r<=1 and g<=1 and b<=1):
+            self.curret_color = color(int(r * 255), int(g * 255), int(b * 255))
+        else:
+            self.curret_color = color(r,g,b)
+
         self.glClear()
 
     def glViewPort(self, x, y):
@@ -52,43 +108,14 @@ class Renderer(object):
         self.vpy = y
 
     def glColor(self, r, g, b):
-        self.curret_color = color(int(r * 255), int(g * 255), int(b * 255))
+        if(r <= 1 and g <= 1 and b <= 1):
+            self.curret_color = color(int(r * 255), int(g * 255), int(b * 255))
+        else:
+            self.curret_color = color(r,g,b)
 
-    def write(self, filename):
-        f = open(filename, "bw")
-        # file header - 14
-        f.write(char("B"))
-        f.write(char("M"))
-        f.write(dword(14 + 40 + 3 * (self.width * self.height)))
-        f.write(dword(0))
-        f.write(dword(14 + 40))
-
-        # info header - 40
-        f.write(dword(40))
-        f.write(dword(self.width))
-        f.write(dword(self.height))
-        f.write(word(1))
-        f.write(word(24))
-        f.write(dword(0))
-        f.write(dword(3 * (self.width * self.height)))
-        f.write(dword(0))
-        f.write(dword(0))
-        f.write(dword(0))
-        f.write(dword(0))
-
-        # bitmap
-        for y in range(self.height):
-            for x in range(self.width):
-                f.write(self.framebuffer[y][x])
-
-        f.close()
-
-    def glFinish(self):
-        self.write("x.bmp")
-
-    def point(self, x, y, color):
+    def point(self, x, y):
         try:
-            self.framebuffer[int(y)][int(x)] = color
+            self.framebuffer[int(y)][int(x)] = self.curret_color
         except:
             pass
 
@@ -158,59 +185,149 @@ class Renderer(object):
                 y += 1 if y0 < y1 else -1
                 threshold += dx * 2
 
-    def load(self, filename, translate, scale):
+    def load(self, filename, movement, scale):
         from obj import Obj
         model = Obj(filename)
+        light = norm(V3(0,0,1))
+        for face in (model.faces):
+            vcount  = len(face)
 
-        for face in model.faces:
-            vcount = len(face)
+            if vcount == 3:
+                f1 = face[0][0]-1
+                f2 = face[1][0]-1
+                f3 = face[2][0]-1
 
-            for j in range(vcount):
-                f1 = face[j][0]
-                f2 = face[(j + 1) % vcount][0]
+                A = self.transform(model.vertices[f1],movement,scale)
+                B = self.transform(model.vertices[f2], movement, scale)
+                C = self.transform(model.vertices[f3], movement, scale)
 
-                v1 = model.vertices[f1 - 1]
-                v2 = model.vertices[f2 - 1]
+                normal = norm(cross(sub(B,A),sub(C,A)))
+                intensity = dot(normal, light)
+                grey = round(255*intensity)
+                if intensity < 0: grey =0
+                self.glColor(grey/255,(grey/255),(grey/255))
+                self.triangle(A,B,C)
+            elif vcount == 4:
+                f1 = face[0][0]-1
+                f2 = face[1][0]-1
+                f3 = face[2][0]-1
+                f4 = face[3][0]-1
 
-                x1 = round((v1[0] + translate[0]) * scale[0])
-                y1 = round((v1[1] + translate[1]) * scale[1])
-                x2 = round((v2[0] + translate[0]) * scale[0])
-                y2 = round((v2[1] + translate[1]) * scale[1])
+                A = self.transform(model.vertices[f1],movement,scale)
+                B = self.transform(model.vertices[f2], movement, scale)
+                C = self.transform(model.vertices[f3], movement, scale)
+                D = self.transform(model.vertices[f4], movement, scale)
 
-                self.line2(x1, y1, x2, y2, self.curret_color)
+                normal = norm(cross(sub(A,B),sub(B,C)))
+                intensity = dot(normal, light)
+                grey = round(255*intensity)
+                if intensity < 0: grey = 0
 
-    def fill(self, polygon, color):
-        polygon = [list(pol) for pol in polygon]
-        xmax = max(map(lambda x: x[0], polygon))
-        xmin = min(map(lambda x: x[0], polygon))
-        ymax = max(map(lambda x: x[1], polygon))
-        ymin = min(map(lambda x: x[1], polygon))
-        dy = round((ymax + ymin) / 2)
-        dx = round((xmax + xmin) / 2)
-        countx = xmax
-        county = ymax
-        while dx < countx and dy < county:
-            for i in range(0, len(polygon)):
-                if i == (len(polygon)-1):
-                    self.line2(polygon[i][0], polygon[i][1], polygon[0][0], polygon[0][1], color)
+                self.glColor(grey/255,(grey/255),(grey/255))
 
-                else:
-                    self.line2(polygon[i][0], polygon[i][1], polygon[i+1][0], polygon[i+1][1], color)
+                self.triangle(A,B,C)
+                self.triangle(A,C,D)
 
-                if polygon[i][0] > dx:
-                    polygon[i][0] -= 1
-                elif polygon[i][0] < dx:
-                    polygon[i][0] += 1
+    def transform(self, v, translate, scale):
+        return V3(
+            round(((v[0] + translate[0]) * scale[0])),
+            round(((v[1] + translate[1]) * scale[1])),
+            round(((v[2] + translate[2]) * scale[2]))
+        )
 
+    def triangle(self, A, B, C, color = None):
+        xmin, xmax, ymin, ymax = bbox(A, B, C)
 
-                if polygon[i][1] > dy:
-                    polygon[i][1] -= 1
-                elif polygon[i][1] < dy:
-                    polygon[i][1] += 1
+        for x in range(xmin, xmax + 1):
+            for y in range(ymin, ymax + 1):
+                P = V2(x, y)
+                w, v, u = barycentric(A, B, C, P)
+                if w < 0 or v < 0 or u < 0:
+                    continue
 
+                z = A.z * w+B.z*v+C.z*u
+                try:
+                    if z> self.zbuffer[y][x]:
 
-            if countx > dx:
-                countx -= 1
-            if county > dy:
-                county -= 1
-        pass
+                        self.point(x,y)
+                        self.zbuffer[y][x] =z
+                except:
+                    pass
+
+    def glFinish(self, filename):
+        f = open(filename, "bw")
+        # file header - 14
+        f.write(char("B"))
+        f.write(char("M"))
+        f.write(dword(14 + 40 + 3 * (self.width * self.height)))
+        f.write(dword(0))
+        f.write(dword(14 + 40))
+
+        # info header - 40
+        f.write(dword(40))
+        f.write(dword(self.width))
+        f.write(dword(self.height))
+        f.write(word(1))
+        f.write(word(24))
+        f.write(dword(0))
+        f.write(dword(3 * (self.width * self.height)))
+        f.write(dword(0))
+        f.write(dword(0))
+        f.write(dword(0))
+        f.write(dword(0))
+
+        # bitmap
+        for y in range(self.height):
+            for x in range(self.width):
+                f.write(self.framebuffer[y][x])
+
+        f.close()
+
+    def glFinishZ(self, filename):
+        #bw means binary write
+        f = open(filename, 'bw')
+        #file header
+        f.write(char('B'))
+        f.write(char('M'))
+        f.write(dword(14+40+ 3*(self.width*self.height)))
+        f.write(dword(0))
+        f.write(dword(14+40))
+
+        #info header
+        f.write(dword(40))
+        f.write(dword(self.width))
+        f.write(dword(self.height))
+        f.write(word(1))
+        f.write(word(24))
+        f.write(dword(0))
+        f.write(dword(3*(self.width*self.height)))
+        f.write(dword(0))
+        f.write(dword(0))
+        f.write(dword(0))
+        f.write(dword(0))
+
+        z_min = float('inf')
+        z_max = -float('inf')
+
+        for x in range(self.height):
+            for y in range(self.width):
+                if self.zbuffer[x][y] != -float('inf'):
+                    if self.zbuffer[x][y] > z_max:
+                        z_max = self.zbuffer[x][y]
+
+                    if self.zbuffer[x][y] < z_min:
+                        z_min = self.zbuffer[x][y]
+
+        for x in range(self.height):
+            for y in range(self.width):
+                z_value = self.zbuffer[x][y]
+
+                if z_value == -float('inf'):
+                    z_value = z_min
+
+                z_value = round(((z_value - z_min) / (z_max - z_min)) * 255)
+
+                z_color = color(z_value, z_value, z_value)
+                f.write(z_color)
+
+        f.close()

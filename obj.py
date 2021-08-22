@@ -1,3 +1,6 @@
+import struct
+import gl as gl
+
 class Obj(object):
     def __init__(self, filename):
         with open(filename) as f:
@@ -29,8 +32,37 @@ class Obj(object):
                             )
 
 
-import gl as gl
-render = gl.Renderer(800, 600)
-render.load('./models/car.obj', [4,3], [100, 100])
-render.glFinish()
+class Texture(object):
+    def __init__(self, path ):
+        self.path = path
+        self.pixels = []
+        self.read()
+
+    def read(self):
+        image = open(self.path, "br")
+
+        val = image.read(4)
+        header_size = struct.unpack('=1', image)[0]
+
+        image.seek(18)
+        self.width = struct.unpack('=1', image.read(4))[0]
+        self.height = struct.unpack('=1', image.read(4))[0]
+
+        image.seek(header_size)
+
+        for y in range(self.height):
+            self.pixels.append([])
+            for x in range(self.width):
+                b = ord(image.read(1))
+                g = ord(image.read(1))
+                r = ord(image.read(1))
+                self.pixels[y].append(gl.color(r, g, b))
+
+# t = Texture('/.tex.bmp')
+# t.read()
+
+render = gl.Renderer(1000, 1000)
+render.load('./models/cube2.obj', [6 , 5, 0], [100, 100, 120])
+render.glFinish('./x.bmp')
+render.glFinishZ('./x2.bmp')
 
