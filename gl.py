@@ -51,7 +51,7 @@ def barycentric(A, B, C, P):
     v = cy / cz
     u = cx / cz
     w = 1 - (cx + cy)/cz
-    return w, v, u
+    return w, u, v
 
 def sub(v0,v1):
     return V3(v0.x - v1.x, v0.y - v1.y, v0.z - v1.z)
@@ -113,9 +113,9 @@ class Renderer(object):
         else:
             self.curret_color = color(r,g,b)
 
-    def point(self, x, y):
+    def point(self, x, y, color = None):
         try:
-            self.framebuffer[int(y)][int(x)] = self.curret_color
+            self.framebuffer[int(y)][int(x)] = color or self.curret_color
         except:
             pass
 
@@ -185,10 +185,27 @@ class Renderer(object):
                 y += 1 if y0 < y1 else -1
                 threshold += dx * 2
 
-    def load(self, filename, movement, scale):
+    def display(self, filename='out.bmp'):
+        """
+        Displays the image, a external library (wand) is used, but only for convenience during development
+        """
+        self.glFinish(filename)
+
+        try:
+            from wand.image import Image
+            from wand.display import display
+
+            with Image(filename=filename) as image:
+                display(image)
+        except ImportError:
+            pass  # do nothing if no wand is installed
+
+    def load(self, filename, movement, scale, texture=None):
         from obj import Obj
+        
         model = Obj(filename)
         light = norm(V3(0,0,1))
+
         for face in (model.faces):
             vcount  = len(face)
 
@@ -203,30 +220,60 @@ class Renderer(object):
 
                 normal = norm(cross(sub(B,A),sub(C,A)))
                 intensity = dot(normal, light)
-                grey = round(255*intensity)
-                if intensity < 0: grey =0
-                self.glColor(grey/255,(grey/255),(grey/255))
-                self.triangle(A,B,C)
+                
+                if not texture:
+                    grey = round(255 * intensity)
+                    if grey < 0:
+                        continue
+                    self.triangle(A, B, C, col=color(grey, grey, grey))
+                else:
+                    t1 = face[0][1] - 1
+                    t2 = face[1][1] - 1
+                    t3 = face[2][1] - 1
+                    tA = V3(*model.tvertices[t1])
+                    tB = V3(*model.tvertices[t2])
+                    tC = V3(*model.tvertices[t3])
+
+                    self.triangle(A, B, C, texture=texture, texture_coords=(tA, tB, tC), intensity=intensity)
+
+
             elif vcount == 4:
-                f1 = face[0][0]-1
-                f2 = face[1][0]-1
-                f3 = face[2][0]-1
-                f4 = face[3][0]-1
+                f1 = face[0][0] - 1
+                f2 = face[1][0] - 1
+                f3 = face[2][0] - 1
+                f4 = face[3][0] - 1   
 
-                A = self.transform(model.vertices[f1],movement,scale)
-                B = self.transform(model.vertices[f2], movement, scale)
-                C = self.transform(model.vertices[f3], movement, scale)
-                D = self.transform(model.vertices[f4], movement, scale)
+                vertices = [
+                    self.transform(model.vertices[f1], movement, scale),
+                    self.transform(model.vertices[f2], movement, scale),
+                    self.transform(model.vertices[f3], movement, scale),
+                    self.transform(model.vertices[f4], movement, scale)
+                ]
 
-                normal = norm(cross(sub(A,B),sub(B,C)))
+                normal = norm(cross(sub(vertices[0], vertices[1]), sub(vertices[1], vertices[2])))  # no necesitamos dos normales!!
                 intensity = dot(normal, light)
-                grey = round(255*intensity)
-                if intensity < 0: grey = 0
+                grey = round(255 * intensity)
 
-                self.glColor(grey/255,(grey/255),(grey/255))
+                A, B, C, D = vertices 
 
-                self.triangle(A,B,C)
-                self.triangle(A,C,D)
+                if not texture:
+                    grey = round(255 * intensity)
+                    if grey < 0:
+                        continue
+                    self.triangle(A, B, C, color(grey, grey, grey))
+                    self.triangle(A, C, D, color(grey, grey, grey))            
+                else:
+                    t1 = face[0][1] - 1
+                    t2 = face[1][1] - 1
+                    t3 = face[2][1] - 1
+                    t4 = face[3][1] - 1
+                    tA = V3(*model.tvertices[t1])
+                    tB = V3(*model.tvertices[t2])
+                    tC = V3(*model.tvertices[t3])
+                    tD = V3(*model.tvertices[t4])
+                    
+                    self.triangle(A, B, C, texture=texture, texture_coords=(tA, tB, tC), intensity=intensity)
+                    self.triangle(A, C, D, texture=texture, texture_coords=(tA, tC, tD), intensity=intensity)
 
     def transform(self, v, translate, scale):
         return V3(
@@ -235,7 +282,7 @@ class Renderer(object):
             round(((v[2] + translate[2]) * scale[2]))
         )
 
-    def triangle(self, A, B, C, color = None):
+    def triangle(self, A, B, C, col = None, texture=None, texture_coords=(), intensity=1):
         xmin, xmax, ymin, ymax = bbox(A, B, C)
 
         for x in range(xmin, xmax + 1):
@@ -245,14 +292,24 @@ class Renderer(object):
                 if w < 0 or v < 0 or u < 0:
                     continue
 
-                z = A.z * w+B.z*v+C.z*u
-                try:
-                    if z> self.zbuffer[y][x]:
+                if texture:
+                    tA, tB, tC = texture_coords
+                    tx = tA.x * w + tB.x * v + tC.x * u
+                    ty = tA.y * w + tB.y * v + tC.y * u
+                    
+                    ttcolor = texture.get_color(tx, ty)
+                    b, g, r = [int(c * intensity) if intensity > 0 else 0 for c in ttcolor]
+                    col = color(r, g, b)
 
-                        self.point(x,y)
-                        self.zbuffer[y][x] =z
-                except:
-                    pass
+
+                z = A.z * w + B.z * v + C.z * u
+
+                if x < 0 or y < 0:
+                    continue
+
+                if x < len(self.zbuffer) and y < len(self.zbuffer[x]) and z > self.zbuffer[x][y]:
+                    self.point(x, y, col)
+                    self.zbuffer[x][y] = z
 
     def glFinish(self, filename):
         f = open(filename, "bw")
